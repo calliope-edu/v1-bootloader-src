@@ -1062,6 +1062,24 @@ uint32_t dfu_transport_update_start(void)
     {
         m_ble_peer_data_valid = true;
     }
+    /* Calliope open-mode mod (2026-05): keep the bootloader's BD_ADDR
+     * identical to the application's. Stock micro:bit/Nordic behaviour
+     * increments addr.addr[0] by one here so the DFU bootloader is
+     * distinguishable on-air from the running app. That's fine for the
+     * iOS/Android Nordic DFU libraries, which scan for "DfuTarg" by name
+     * and pair to whatever address advertises. But Web Bluetooth pins its
+     * BluetoothDevice handle to the app's MAC: after the buttonless-DFU
+     * reboot, `device.gatt.connect()` can't reach the +1 address, and
+     * service discovery fails with "No Services found in device". The
+     * widget would have to pop a fresh chooser/permission prompt for the
+     * +1 address, which breaks the unattended flash flow. Keeping the
+     * address identical lets the widget reconnect to the same handle; the
+     * bootloader is still distinguishable by its advertised name
+     * ("DfuTarg") and service set (legacy Nordic DFU 00001530) at the GATT
+     * layer. This is the nRF51/SDK-8 counterpart of the same fix shipped
+     * in the nRF52 v3-bootloader (calliope-edu/v3-bootloader). The
+     * address-increment block below is intentionally left disabled.
+     */
     // else
     // {
     //     ble_gap_addr_t addr;

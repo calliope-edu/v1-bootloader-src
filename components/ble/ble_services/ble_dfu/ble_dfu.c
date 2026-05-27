@@ -468,11 +468,25 @@ uint32_t ble_dfu_init(ble_dfu_t * p_dfu, ble_dfu_init_t * p_dfu_init)
     ble_uuid_t service_uuid;
     uint32_t   err_code;
 
+    /* Calliope open-mode mod (2026-05): use the micro:bit vendor base UUID
+     * e95d0000-251d-470a-a062-fa1922dfa9a8 (LSB-first) instead of the stock
+     * Nordic base. With slot 0x1530 the DFU service becomes
+     * e95d1530-251d-470a-a062-fa1922dfa9a8 (control e95d1531, packet e95d1532,
+     * rev e95d1534). WHY: the standard Nordic DFU service
+     * 00001530-1212-efde-1523-785feabcd123 is on the Web Bluetooth GATT
+     * BLOCKLIST — Chrome refuses to filter for it, hides it from
+     * getPrimaryServices(), and SecurityErrors on getPrimaryService(). So no
+     * 00001530-based bootloader can be flashed over Web Bluetooth. The micro:bit
+     * e95d base is NOT blocklisted (the app's e95d93b0 DFU-control service is
+     * reachable from Chrome), so re-basing makes the bootloader's DFU service
+     * discoverable + accessible from Web Bluetooth. Slot stays 0x1530 (distinct
+     * from the app's e95d93b0, so no GATT-cache collision). Build with gcc-4.8
+     * (no LTO) so it advertises (gcc-10+LTO silently breaks advertising). */
     const ble_uuid128_t base_uuid128 =
     {
         {
-            0x23, 0xD1, 0xBC, 0xEA, 0x5F, 0x78, 0x23, 0x15,
-            0xDE, 0xEF, 0x12, 0x12, 0x00, 0x00, 0x00, 0x00
+            0xA8, 0xA9, 0xDF, 0x22, 0x19, 0xFA, 0x62, 0xA0,
+            0x0A, 0x47, 0x1D, 0x25, 0x00, 0x00, 0x5D, 0xE9
         }
     };
 

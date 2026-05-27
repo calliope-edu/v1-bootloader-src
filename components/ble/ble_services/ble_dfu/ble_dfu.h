@@ -33,7 +33,13 @@
 #include "ble.h"
 #include "ble_srv_common.h"
 
-#define BLE_DFU_SERVICE_UUID                 0x1530                       /**< The UUID of the DFU Service. */
+/* DFU service 16-bit slot. Combined with the micro:bit vendor base set in
+ * ble_dfu.c, this yields service e95d1530 (control e95d1531, packet e95d1532,
+ * rev e95d1534). The slot value is unchanged from stock (0x1530); only the base
+ * differs — because the stock full UUID 00001530-1212-efde-1523-785feabcd123 is
+ * on the Web Bluetooth GATT blocklist and is unreachable from Chrome, whereas
+ * the micro:bit base is not. See ble_dfu.c for the full rationale. */
+#define BLE_DFU_SERVICE_UUID                 0x1530                       /**< DFU Service slot (under micro:bit base -> e95d1530). */
 #define BLE_DFU_PKT_CHAR_UUID                0x1532                       /**< The UUID of the DFU Packet Characteristic. */
 #define BLE_DFU_CTRL_PT_UUID                 0x1531                       /**< The UUID of the DFU Control Point. */
 #define BLE_DFU_STATUS_REP_UUID              0x1533                       /**< The UUID of the DFU Status Report Characteristic. */

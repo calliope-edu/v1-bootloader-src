@@ -131,34 +131,32 @@ static void sys_evt_dispatch(uint32_t event)
  *                             be initialized if a chip reset has occured. Soft reset from 
  *                             application must not reinitialize the SoftDevice.
  */
-static void ble_stack_init(bool init_softdevice)
+static void ble_stack_init(void)
 {
-    uint32_t         err_code;
+    uint32_t err_code;
     sd_mbr_command_t com = {SD_MBR_COMMAND_INIT_SD, };
 
-    if (init_softdevice)
-    {
-        err_code = sd_mbr_command(&com);
-        APP_ERROR_CHECK(err_code);
-    }
-    
+    // Calliope (2026-05): always do a full SoftDevice init. The codal/Calliope
+    // app disables the SoftDevice before handing off to DFU, and we force a clean
+    // system reset on entry (see main()), so the SD is always down here and must
+    // be re-initialised from scratch — like a cold boot. (Upstream skipped
+    // INIT_SD on a buttonless entry, assuming the SD stayed up.)
+    err_code = sd_mbr_command(&com);
+    APP_ERROR_CHECK(err_code);
+
     err_code = sd_softdevice_vector_table_base_set(BOOTLOADER_REGION_START);
     APP_ERROR_CHECK(err_code);
 
     SOFTDEVICE_HANDLER_APPSH_INIT(NRF_CLOCK_LFCLKSRC_RC_250_PPM_4000MS_CALIBRATION, true);
 
-    // Enable BLE stack 
     ble_enable_params_t ble_enable_params;
     memset(&ble_enable_params, 0, sizeof(ble_enable_params));
-    
-    // Below code line is needed for s130. For s110 is inrrelevant - but executable
-    // can run with both s130 and s110.
+    // Below code line is needed for s130. For s110 it is irrelevant.
     ble_enable_params.gatts_enable_params.attr_tab_size   = BLE_GATTS_ATTR_TAB_SIZE_DEFAULT;
-
     ble_enable_params.gatts_enable_params.service_changed = IS_SRVC_CHANGED_CHARACT_PRESENT;
     err_code = sd_ble_enable(&ble_enable_params);
     APP_ERROR_CHECK(err_code);
-    
+
     err_code = softdevice_sys_evt_handler_set(sys_evt_dispatch);
     APP_ERROR_CHECK(err_code);
 }
@@ -178,8 +176,24 @@ int main(void)
 {
     uint32_t err_code;
     bool     dfu_start = false;
-    bool     app_reset = (NRF_POWER->GPREGRET == BOOTLOADER_DFU_START);
 
+    // Calliope fix (2026-05): the codal/Calliope application hands off to DFU with
+    // a DIRECT JUMP (dfu_app_handler.c bootloader_start -> bootloader_util_app_start),
+    // NOT a system reset. So the bootloader inherits the app's dirty peripheral /
+    // NVIC state (running TIMER1, configured IRQ priorities, etc.), which faults
+    // both the micro:bit display-timer init and the SoftDevice (re-)init — the
+    // bootloader then resets back into the app and never sustains DFU. Forcing a
+    // real NVIC_SystemReset here resets the peripherals to a clean state; we
+    // re-enter DFU via a distinct GPREGRET marker that survives the reset, after
+    // which the buttonless path behaves exactly like the working cold-DFU path.
+    #define CALLIOPE_DFU_CLEAN_REENTER 0xB2
+    if (NRF_POWER->GPREGRET == BOOTLOADER_DFU_START)
+    {
+        NRF_POWER->GPREGRET = CALLIOPE_DFU_CLEAN_REENTER;
+        NVIC_SystemReset();
+    }
+
+    bool app_reset = (NRF_POWER->GPREGRET == CALLIOPE_DFU_CLEAN_REENTER);
     if (app_reset)
     {
         NRF_POWER->GPREGRET = 0;
@@ -194,6 +208,9 @@ int main(void)
     timers_init();
     // buttons_init();
 
+    // Display status LEDs during DFU. (This drives TIMER1 + raw NVIC writes; it
+    // HardFaults if the app's peripheral/NVIC state is still live, but the forced
+    // clean reset above guarantees a pristine state on every entry, so it's safe.)
     mb_display_init();
 
     (void)bootloader_init();
@@ -205,7 +222,7 @@ int main(void)
         err_code = bootloader_dfu_sd_update_continue();
         APP_ERROR_CHECK(err_code);
 
-        ble_stack_init(!app_reset);
+        ble_stack_init();
         scheduler_init();
 
         err_code = bootloader_dfu_sd_update_finalize();
@@ -216,7 +233,7 @@ int main(void)
     else
     {
         // If stack is present then continue initialization of bootloader.
-        ble_stack_init(!app_reset);
+        ble_stack_init();
         scheduler_init();
     }
 

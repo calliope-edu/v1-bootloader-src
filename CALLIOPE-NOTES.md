@@ -1,5 +1,33 @@
 # Calliope mini v1 / v2 bootloader — BD_ADDR keep-app fix
 
+> **STATUS (2026-05-27): WORKING — Chrome / Web-Bluetooth verified on mini v2.**
+> After the buttonless trigger (write `0x01` to `e95d93b1`) the bootloader
+> re-advertises as `DfuTarg` at the **same MAC**, general/discoverable, exposing its
+> DFU service as **`e95d1530`** (control `e95d1531`, packet `e95d1532`, rev
+> `e95d1534`). Chrome reconnects to the same device handle, re-discovers, and
+> `getPrimaryService(e95d1530)` SUCCEEDS — so Web-Bluetooth BLE-DFU is viable. The
+> fixes, in order of importance:
+>
+> 1. **Toolchain** — build with **gcc-arm-none-eabi 4.8.x, no `-flto`** (see
+>    `Dockerfile.gcc48`). gcc-10 + LTO produced a bootloader that ran but never
+>    advertised. Root cause.
+> 2. **Force a clean reset on the codal handoff** (`main.c`). The codal app hands off
+>    via a *direct jump* (`bootloader_util_app_start`), not a system reset, leaving
+>    peripherals/NVIC dirty → the display-timer and SoftDevice init HardFault. On
+>    `GPREGRET==0xB1` we set `0xB2` and `NVIC_SystemReset()`, then enter DFU on the
+>    `0xB2` marker with clean hardware (like cold-DFU).
+> 3. **DFU service UUID re-based to the micro:bit base → `e95d1530`** (`ble_dfu.c`).
+>    The standard Nordic `00001530-1212-efde-1523-785feabcd123` is on the **Web
+>    Bluetooth GATT blocklist** (Chrome hides it / refuses access), which is the real
+>    reason web BLE-DFU never worked. The micro:bit base is not blocklisted.
+> 4. **Force general advertising** (`dfu_transport_ble.c`) — the app shares peer data
+>    so the stock bootloader does directed/whitelist adv (unreachable by Web
+>    Bluetooth); we force `m_ble_peer_data_valid=false`. (+ a Service-Changed
+>    indication, though the blocklist, not caching, was the actual blocker.)
+>
+> **Remaining:** point the widget's V1 DFU client at the `e95d1530` UUID set (was
+> `00001530`), run a real end-to-end flash, and bundle into combined deployment hexes.
+
 This is a fork of [`matthewelse/microbit-bootloader`](https://github.com/matthewelse/microbit-bootloader)
 (archived) — a GCC-buildable Nordic SDK-8 / S110 DFU bootloader for the
 nRF51822, the same chip used on **Calliope mini v1 and mini v2**.

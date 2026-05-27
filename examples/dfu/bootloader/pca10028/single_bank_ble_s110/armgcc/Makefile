@@ -110,7 +110,11 @@ CFLAGS += -DBLE_STACK_SUPPORT_REQD
 CFLAGS += -DBSP_DEFINES_ONLY
 CFLAGS += -mcpu=cortex-m0
 CFLAGS += -mthumb -mabi=aapcs --std=gnu99
-CFLAGS += -Wall -Werror -Os -flto
+# Build with the period gcc-arm-none-eabi 4.8.x (see Dockerfile.gcc48). 4.8 fits
+# the bootloader flash region without LTO, like the factory image. Do NOT add
+# -flto: gcc 10 needed it to fit, but LTO breaks the SDK-8 SoftDevice glue so the
+# bootloader runs yet never starts BLE advertising.
+CFLAGS += -Wall -Werror -Os
 CFLAGS += -mfloat-abi=soft
 # keep every function in separate section. This will allow linker to dump unused functions
 CFLAGS += -ffunction-sections -fdata-sections -fno-strict-aliasing

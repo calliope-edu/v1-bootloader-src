@@ -1058,10 +1058,16 @@ uint32_t dfu_transport_update_start(void)
     }
 
     err_code = dfu_ble_peer_data_get(&m_ble_peer_data);
-    if (err_code == NRF_SUCCESS)
-    {
-        m_ble_peer_data_valid = true;
-    }
+    /* Calliope mod (2026-05): deliberately DO NOT mark the shared peer data
+     * valid. The codal app hands off bond/peer data, which would make the stock
+     * bootloader do DIRECTED (ADV_DIRECT_IND) / whitelist-filtered advertising
+     * back to the bonded central — invisible to a general scan and unreachable by
+     * Web Bluetooth (Chrome can't re-scan; it reconnects to the kept device
+     * handle). Forcing m_ble_peer_data_valid = false makes advertising_start()
+     * use GENERAL discoverable advertising (ADV_IND, FP_ANY) at the kept app MAC,
+     * which Chrome's device.gatt.connect() can reach. */
+    (void)err_code;
+    m_ble_peer_data_valid = false;
     /* Calliope open-mode mod (2026-05): keep the bootloader's BD_ADDR
      * identical to the application's. Stock micro:bit/Nordic behaviour
      * increments addr.addr[0] by one here so the DFU bootloader is

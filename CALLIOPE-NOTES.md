@@ -91,10 +91,30 @@ s110_nrf51822_8.0.0_bootloader.hex`:
 Vector-table addresses differ (gcc 4.8.3 original vs gcc 10.3.1 + LTO
 here) — expected for the same source under a different toolchain.
 
-**Not yet verified:** byte-level identity with the exact factory build,
-and an end-to-end hardware flash test. Both need tooling not yet set up
-(period gcc 4.8.3 for a byte-compare, or an SWD/J-Link flash read off
-hardware). The structural match is strong but not conclusive.
+**Hardware-verified (2026-05-27)** on a Calliope mini v1 (DAPLink
+unique-id `12A0000…`): flashed this bootloader + makecode-1-ble app,
+A+B+Reset into pairing mode (app advertised at MAC
+`CD:10:74:D0:99:9D`), wrote `0x01` to `e95d93b1` to trigger DFU. The
+device rebooted and re-advertised **at the same MAC `CD:10:74:D0:99:9D`**
+(stock behaviour would be `…9E`), exposing the legacy Nordic DFU
+service `00001530-…`. Connected to it within the DFU window and
+confirmed the service set. This is exactly what Web Bluetooth needs —
+`device.gatt.connect()` reaches the same handle after the reboot, so
+service discovery no longer fails with "No Services found in device".
+
+**Still not byte-verified** against the exact factory build (needs
+period gcc 4.8.3) — but the fix's *behaviour* is now confirmed on
+real hardware, which is what matters.
+
+## IMPORTANT: deploy as a combined hex, not bootloader-only
+
+Drag-flashing this bootloader-only hex on the mini v1 DAPLink
+**mass-erased the app region** — the display went blank until
+makecode-1-ble was re-flashed (the patched bootloader itself was
+intact and the device booted fine once the app was restored). So for
+deployment, bundle the patched bootloader into a **combined image**
+(SoftDevice + DAL/app + bootloader) so a single flash leaves the
+device fully working. A standalone bootloader flash will wipe the app.
 
 ## Deployment + recovery
 

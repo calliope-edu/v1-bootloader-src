@@ -64,6 +64,12 @@
 #define BOOTLOADER_BUTTON               BSP_BUTTON_3                                            /**< Button used to enter SW update mode. */
 #define UPDATE_IN_PROGRESS_LED          BSP_LED_2                                               /**< Led used to indicate that DFU is active. */
 
+/* NOTE: Calliope mini button GPIOs are A=P0.17, B=P0.16 (NOT P0.26 like
+ * micro:bit — verified empirically by reading GPIO->IN). The bootloader does
+ * NOT read the buttons: A+B+Reset / triple-reset are the APP/DAL's gesture for
+ * entering BLE pairing mode, not a DFU trigger. DFU is entered only via the
+ * buttonless command path. (Pins kept here as a reference for the DAL/app.) */
+
 #define APP_TIMER_PRESCALER             0                                                       /**< Value of the RTC1 PRESCALER register. */
 #define APP_TIMER_MAX_TIMERS            3                                                       /**< Maximum number of simultaneously created timers. */
 #define APP_TIMER_OP_QUEUE_SIZE         4                                                       /**< Size of timer operation queues. */
@@ -104,7 +110,7 @@ static void timers_init(void)
 static void buttons_init(void)
 {
     nrf_gpio_cfg_sense_input(BOOTLOADER_BUTTON,
-                             BUTTON_PULL, 
+                             BUTTON_PULL,
                              NRF_GPIO_PIN_SENSE_LOW);
 
 }
@@ -237,18 +243,20 @@ int main(void)
         scheduler_init();
     }
 
+    // DFU is entered ONLY on the buttonless command path (app writes the DFU
+    // control characteristic -> GPREGRET handoff -> clean reset -> here) or when
+    // the app image is invalid. A+B+Reset and triple-reset are NOT handled here:
+    // those are the APP/DAL's gesture for entering BLE pairing mode (BLE Mode),
+    // from which the editor/widget connects and then issues the DFU command.
     dfu_start  = app_reset;
-    //dfu_start |= ((nrf_gpio_pin_read(BOOTLOADER_BUTTON) == 0) ? true: false);
-    
+
     if (dfu_start || (!bootloader_app_is_valid(DFU_BANK_0_REGION_START)))
     {
-        //nrf_gpio_pin_clear(UPDATE_IN_PROGRESS_LED);
-
-        // Initiate an update of the firmware.
+        // The "+" DFU-mode indicator is shown from advertising_start() and
+        // cleared on connect (see dfu_transport_ble.c) so the display timer
+        // stays quiet through the early-connection window.
         err_code = bootloader_dfu_start();
         APP_ERROR_CHECK(err_code);
-
-        //nrf_gpio_pin_set(UPDATE_IN_PROGRESS_LED);
     }
 
     if (bootloader_app_is_valid(DFU_BANK_0_REGION_START) && !bootloader_dfu_sd_in_progress())

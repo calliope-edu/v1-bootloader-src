@@ -761,6 +761,15 @@ static void advertising_start(void)
         err_code = sd_ble_gap_adv_start(&m_adv_params);
         APP_ERROR_CHECK(err_code);
 
+        // Show a "+" on the 5x5 matrix while idle/advertising in DFU mode (like
+        // codal V3). Logical bitmap bit = 5*row+col: centre column of every row
+        // + the full middle row. Cleared on connect (the display timer must be
+        // quiet through the fragile early-connection window or it disrupts the
+        // SoftDevice and the link drops at START_DFU); the per-PRN progress bar
+        // re-enables the display once the transfer is underway.
+        #define CALLIOPE_DFU_PLUS_BITMAP  0x00427C84UL
+        mb_display_set_image(CALLIOPE_DFU_PLUS_BITMAP);
+
         m_is_advertising = true;
     }
 }
@@ -796,6 +805,12 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
         case BLE_GAP_EVT_CONNECTED:
             m_conn_handle    = p_ble_evt->evt.gap_evt.conn_handle;
             m_is_advertising = false;
+            // Stop the display multiplexing timer for the fragile early
+            // connection / START_DFU window so it can't disrupt SoftDevice
+            // radio timing (that caused the link to drop at START_DFU). The
+            // firmware-data progress bar turns the display back on once the
+            // transfer is underway and the connection has settled.
+            mb_display_set_image(0);
             break;
 
         case BLE_GAP_EVT_DISCONNECTED:

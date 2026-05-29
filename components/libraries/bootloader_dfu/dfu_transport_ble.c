@@ -340,6 +340,13 @@ static void start_data_process(ble_dfu_t * p_dfu, ble_dfu_evt_t * p_evt)
         start_packet.app_image_size = uint32_decode(p_length_data + APP_IMAGE_SIZE_OFFSET);
         m_total_image_size = start_packet.sd_image_size + start_packet.bl_image_size + start_packet.app_image_size;
 
+        // Pre-light pixel 0 the moment the DFU procedure begins (between
+        // START_DFU and the first data packet the display would otherwise
+        // be blank from the on-connect clear). The progress bar in
+        // firmware_data_process keeps this pixel lit (lit is floored at 1)
+        // and lights additional pixels at the usual proportional thresholds.
+        mb_display_set_image(0x1);
+
         err_code = dfu_start_pkt_handle(&update_packet);
         if (err_code != NRF_SUCCESS)
         {
@@ -483,11 +490,14 @@ static void app_data_process(ble_dfu_t * p_dfu, ble_dfu_evt_t * p_evt)
             {
                 // Proportional 5x5 progress bar across all 25 pixels based on
                 // bytes received / total image size. m_total_image_size is set
-                // by START_DFU. Pixels fill 0..24 cumulatively (mb_display_set_image
-                // is idempotent — already-lit pixels stay lit, no flicker).
+                // by START_DFU. lit is floored at 1 so pixel 0 stays lit from
+                // the start of the procedure (pre-lit on START_DFU above) and
+                // the next pixel comes on at the same proportional threshold
+                // as before (~4% / one-25th of the transfer).
                 if (m_total_image_size > 0)
                 {
                     uint32_t lit = (m_num_of_firmware_bytes_rcvd * 25u) / m_total_image_size;
+                    if (lit < 1u)  lit = 1u;
                     if (lit > 25u) lit = 25u;
                     mb_display_set_image((lit >= 25u) ? 0x01FFFFFFu : ((1u << lit) - 1u));
                 }

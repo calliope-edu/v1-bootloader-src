@@ -13,13 +13,20 @@ MEMORY
    */
   FLASH (rx) : ORIGIN = 0x3C000, LENGTH = 0x3C00
 
-  /** RAM Region for bootloader. This setting is suitable when used with s110, s120, s130, s310. */
-  RAM (rwx) :  ORIGIN = 0x20002c00, LENGTH = 0x5380
+  /** RAM Region for bootloader. Sized to fit the 16KB-RAM nRF51822 variant
+   *  (QFAA — Calliope mini v1) AND work on 32KB variants (QFAC — mini v2)
+   *  which just don't use the upper half. The original Nordic SDK 8 template
+   *  put RAM at 0x20002c00 LEN 0x5380 (top 0x20007f80, 32KB map), which works
+   *  on 32KB chips but on 16KB chips puts __StackTop outside RAM, so stack
+   *  ops corrupt the SoftDevice radio — bootloader runs (PC in BL) but never
+   *  advertises. SD keeps its 0x2C00 (11KB) region; bootloader gets 0x1380
+   *  (~4.9KB) which is ample for SDK 8 single-bank DFU. */
+  RAM (rwx) :  ORIGIN = 0x20002c00, LENGTH = 0x1380
 
   /** Location of non initialized RAM. Non initialized RAM is used for exchanging bond information
-   *  from application to bootloader when using buttonluss DFU OTA. 
+   *  from application to bootloader when using buttonluss DFU OTA.
    */
-  NOINIT (rwx) :  ORIGIN = 0x20007f80, LENGTH = 0x80
+  NOINIT (rwx) :  ORIGIN = 0x20003f80, LENGTH = 0x80
 
   /** Location of bootloader setting in at the last flash page. */
   BOOTLOADER_SETTINGS (rw) : ORIGIN = 0x0003FC00, LENGTH = 0x0400

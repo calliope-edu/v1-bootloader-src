@@ -42,18 +42,24 @@
 #define DFU_REV_MAJOR                        0x00                                                    /** DFU Major revision number to be exposed. */
 #define DFU_REV_MINOR                        0x04                                                    /** DFU Minor revision number to be exposed. */
 #define DFU_REVISION                         ((DFU_REV_MAJOR << 8) | DFU_REV_MINOR)                  /** DFU Revision number to be exposed. Combined of major and minor versions. */
-#define ADVERTISING_LED_PIXEL_NUMBER         0                                                       /**< Is on when device is advertising. */
-#define CONNECTED_LED_PIXEL_NUMBER           1                                                       /**< Is on when device has connected. */
-#define TIMEOUT_GAP_LED_PIXEL_NUMBER         2                                                       /**< Is on when a GAP timeout occurs */
-#define TIMEOUT_GATT_LED_PIXEL_NUMBER         3                                                       /**< Is on when a GATT timeout occurs */
+// Status LEDs removed: the full 5x5 matrix is used as a proportional DFU
+// progress bar (see firmware_data_process). Saves code + gives clear visual
+// feedback for the full transfer instead of filling at ~3% then going static.
 #define DFU_SERVICE_HANDLE                   0x000C                                                  /**< Handle of DFU service when DFU service is first service initialized. */
 #define BLE_HANDLE_MAX                       0xFFFF                                                  /**< Max handle value is BLE. */
 
 #define DEVICE_NAME                          "DfuTarg"                                               /**< Name of device. Will be included in the advertising data. */
 #define MANUFACTURER_NAME                    "NordicSemiconductor"                                   /**< Manufacturer. Will be passed to Device Information Service. */
 
-#define MIN_CONN_INTERVAL                    (uint16_t)(MSEC_TO_UNITS(15, UNIT_1_25_MS))             /**< Minimum acceptable connection interval (11.25 milliseconds). */
-#define MAX_CONN_INTERVAL                    (uint16_t)(MSEC_TO_UNITS(30, UNIT_1_25_MS))             /**< Maximum acceptable connection interval (15 milliseconds). */
+// SDK default. We TRIED 7.5 ms (MIN=6) for a 2x speedup, and bleak/WinRT
+// honored it (~50s instead of 95s). But Chrome on Windows rejects the narrow
+// range and drops the link right after START_DFU — and after one failed
+// Chrome connect, Windows' GATT service cache also gets stuck for that
+// device, breaking subsequent bleak connections. Keep defaults; speed gain
+// would need a different approach (e.g. Windows pairing / a friendlier
+// negotiation pattern).
+#define MIN_CONN_INTERVAL                    (uint16_t)(MSEC_TO_UNITS(15, UNIT_1_25_MS))             /**< 15 ms */
+#define MAX_CONN_INTERVAL                    (uint16_t)(MSEC_TO_UNITS(30, UNIT_1_25_MS))             /**< 30 ms */
 #define SLAVE_LATENCY                        0                                                       /**< Slave latency. */
 #define CONN_SUP_TIMEOUT                     (4 * 100)                                               /**< Connection supervisory timeout (4 seconds). */
 
@@ -116,7 +122,7 @@ static bool                 m_ble_peer_data_valid    = false;                   
 static uint32_t             m_direct_adv_cnt         = APP_DIRECTED_ADV_TIMEOUT;                     /**< Counter of direct advertisements. */
 static uint8_t            * mp_final_packet;                                                         /**< Pointer to final data packet received. When callback for succesful packet handling is received from dfu bank handling a transfer complete response can be sent to peer. */
 
-static uint8_t mb_packet_notif_count = 0;
+static uint32_t m_total_image_size = 0;  // Set on START_DFU; used by progress LED bar.
 
 /**@brief     Function updating Service Changed CCCD and indicate a service change to peer.
  *
@@ -332,6 +338,7 @@ static void start_data_process(ble_dfu_t * p_dfu, ble_dfu_evt_t * p_evt)
         start_packet.sd_image_size  = uint32_decode(p_length_data + SD_IMAGE_SIZE_OFFSET);
         start_packet.bl_image_size  = uint32_decode(p_length_data + BL_IMAGE_SIZE_OFFSET);
         start_packet.app_image_size = uint32_decode(p_length_data + APP_IMAGE_SIZE_OFFSET);
+        m_total_image_size = start_packet.sd_image_size + start_packet.bl_image_size + start_packet.app_image_size;
 
         err_code = dfu_start_pkt_handle(&update_packet);
         if (err_code != NRF_SUCCESS)
@@ -474,11 +481,15 @@ static void app_data_process(ble_dfu_t * p_dfu, ble_dfu_evt_t * p_evt)
 
             if (m_pkt_notif_target_cnt == 0)
             {
-                mb_packet_notif_count++;
-                mb_display_set_nth_pixel(mb_packet_notif_count + 4);
-
-                if (mb_packet_notif_count >= 20) {
-                    mb_packet_notif_count = 0;
+                // Proportional 5x5 progress bar across all 25 pixels based on
+                // bytes received / total image size. m_total_image_size is set
+                // by START_DFU. Pixels fill 0..24 cumulatively (mb_display_set_image
+                // is idempotent — already-lit pixels stay lit, no flicker).
+                if (m_total_image_size > 0)
+                {
+                    uint32_t lit = (m_num_of_firmware_bytes_rcvd * 25u) / m_total_image_size;
+                    if (lit > 25u) lit = 25u;
+                    mb_display_set_image((lit >= 25u) ? 0x01FFFFFFu : ((1u << lit) - 1u));
                 }
 
                 err_code = ble_dfu_pkts_rcpt_notify(p_dfu, m_num_of_firmware_bytes_rcvd);
@@ -750,9 +761,6 @@ static void advertising_start(void)
         err_code = sd_ble_gap_adv_start(&m_adv_params);
         APP_ERROR_CHECK(err_code);
 
-        // nrf_gpio_pin_clear(ADVERTISING_LED_PIN_NO);
-        mb_display_set_nth_pixel(ADVERTISING_LED_PIXEL_NUMBER);
-
         m_is_advertising = true;
     }
 }
@@ -768,9 +776,6 @@ static void advertising_stop(void)
 
         err_code = sd_ble_gap_adv_stop();
         APP_ERROR_CHECK(err_code);
-
-        // nrf_gpio_pin_set(ADVERTISING_LED_PIN_NO);
-        mb_display_clr_nth_pixel(ADVERTISING_LED_PIXEL_NUMBER);
 
         m_is_advertising = false;
     }
@@ -789,10 +794,6 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
     switch (p_ble_evt->header.evt_id)
     {
         case BLE_GAP_EVT_CONNECTED:
-            // micro:bit show connected LED
-            mb_display_set_nth_pixel(CONNECTED_LED_PIXEL_NUMBER); // CONNECTED
-            mb_display_clr_nth_pixel(ADVERTISING_LED_PIXEL_NUMBER); // ADVERTISING
-
             m_conn_handle    = p_ble_evt->evt.gap_evt.conn_handle;
             m_is_advertising = false;
             break;
@@ -804,8 +805,6 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
             
                 m_direct_adv_cnt = APP_DIRECTED_ADV_TIMEOUT;
 
-                mb_display_clr_nth_pixel(CONNECTED_LED_PIXEL_NUMBER); // CONNECTED
-        
                 err_code = sd_ble_gatts_sys_attr_get(m_conn_handle, 
                                                      sys_attr, 
                                                      &sys_attr_len, 
@@ -850,7 +849,6 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
         case BLE_GATTS_EVT_TIMEOUT:
             if (p_ble_evt->evt.gatts_evt.params.timeout.src == BLE_GATT_TIMEOUT_SRC_PROTOCOL)
             {
-                mb_display_set_nth_pixel(TIMEOUT_GAP_LED_PIXEL_NUMBER);
                 err_code = sd_ble_gap_disconnect(m_conn_handle,
                                                  BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
                 APP_ERROR_CHECK(err_code);
@@ -860,7 +858,6 @@ static void on_ble_evt(ble_evt_t * p_ble_evt)
         case BLE_GAP_EVT_TIMEOUT:
             if (p_ble_evt->evt.gap_evt.params.timeout.src == BLE_GAP_TIMEOUT_SRC_ADVERTISING)
             {
-                mb_display_set_nth_pixel(TIMEOUT_GATT_LED_PIXEL_NUMBER);
                 m_is_advertising = false;
                 m_direct_adv_cnt--;
                 if (m_direct_adv_cnt == 0)

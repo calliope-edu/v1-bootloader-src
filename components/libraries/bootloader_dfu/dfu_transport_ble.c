@@ -338,14 +338,6 @@ static void start_data_process(ble_dfu_t * p_dfu, ble_dfu_evt_t * p_evt)
         start_packet.sd_image_size  = uint32_decode(p_length_data + SD_IMAGE_SIZE_OFFSET);
         start_packet.bl_image_size  = uint32_decode(p_length_data + BL_IMAGE_SIZE_OFFSET);
         start_packet.app_image_size = uint32_decode(p_length_data + APP_IMAGE_SIZE_OFFSET);
-        m_total_image_size = start_packet.sd_image_size + start_packet.bl_image_size + start_packet.app_image_size;
-
-        // Pre-light pixel 0 the moment the DFU procedure begins (between
-        // START_DFU and the first data packet the display would otherwise
-        // be blank from the on-connect clear). The progress bar in
-        // firmware_data_process keeps this pixel lit (lit is floored at 1)
-        // and lights additional pixels at the usual proportional thresholds.
-        mb_display_set_image(0x1);
 
         err_code = dfu_start_pkt_handle(&update_packet);
         if (err_code != NRF_SUCCESS)
@@ -355,6 +347,24 @@ static void start_data_process(ble_dfu_t * p_dfu, ble_dfu_evt_t * p_evt)
 
             resp_val = nrf_err_code_translate(err_code, BLE_DFU_START_PROCEDURE);
             err_code = ble_dfu_response_send(p_dfu, BLE_DFU_START_PROCEDURE, resp_val);
+        }
+        else
+        {
+            // Only commit START-side-effects once the DFU module has accepted
+            // the start packet — don't pre-poison m_total_image_size or light
+            // pixel 0 if the start was rejected (invalid size, NVM busy, ...).
+            // Also re-baseline the firmware-bytes counter so a re-entered
+            // START_DFU within the same bootloader session (e.g. retry after a
+            // mid-transfer disconnect) doesn't carry forward old progress.
+            m_num_of_firmware_bytes_rcvd = 0;
+            m_total_image_size = start_packet.sd_image_size + start_packet.bl_image_size + start_packet.app_image_size;
+
+            // Pre-light pixel 0 the moment the DFU procedure begins (between
+            // START_DFU and the first data packet the display would otherwise
+            // be blank from the on-connect clear). The progress bar in
+            // firmware_data_process keeps this pixel lit (lit is floored at 1)
+            // and lights additional pixels at the usual proportional thresholds.
+            mb_display_set_image(0x1);
         }
 
         APP_ERROR_CHECK(err_code);
@@ -496,7 +506,12 @@ static void app_data_process(ble_dfu_t * p_dfu, ble_dfu_evt_t * p_evt)
                 // as before (~4% / one-25th of the transfer).
                 if (m_total_image_size > 0)
                 {
-                    uint32_t lit = (m_num_of_firmware_bytes_rcvd * 25u) / m_total_image_size;
+                    // Ceil-division so the last few percent don't stick at 24/25:
+                    // truncating division leaves lit=24 from ~96% to ~99.999% and
+                    // only flips to 25 on the very last byte. Adding (denom - 1)
+                    // before dividing rounds up so the bar fills smoothly to 25
+                    // as bytes_rcvd approaches m_total_image_size.
+                    uint32_t lit = (m_num_of_firmware_bytes_rcvd * 25u + m_total_image_size - 1u) / m_total_image_size;
                     if (lit < 1u)  lit = 1u;
                     if (lit > 25u) lit = 25u;
                     mb_display_set_image((lit >= 25u) ? 0x01FFFFFFu : ((1u << lit) - 1u));
